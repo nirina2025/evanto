@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
-import { Eye, EyeOff, Mail, Lock, User, Phone, CreditCard } from 'lucide-react';
+import { Eye, EyeOff, Mail, Lock, User, Phone, Crown } from 'lucide-react';
 
 export const AuthForm: React.FC = () => {
   const { signIn, signUp } = useAuth();
@@ -38,7 +38,7 @@ export const AuthForm: React.FC = () => {
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <div className="w-20 h-20 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-2xl">
-            <CreditCard className="h-10 w-10 text-white" />
+            <Crown className="h-10 w-10 text-white" />
           </div>
           <h1 className="text-4xl font-bold text-white mb-2">SubsManager</h1>
           <p className="text-indigo-200 text-lg">Gestion d'abonnements simplifiée</p>

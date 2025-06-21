@@ -1,14 +1,17 @@
 import React, { useState } from 'react';
-import { auth } from '../lib/firebase';
+import { useAuth } from '../hooks/useAuth';
 import { User } from '../types';
 import { 
   LayoutDashboard, 
-  Package, 
-  History, 
+  Users, 
+  Crown,
+  CreditCard,
+  Bell,
+  Settings,
+  HelpCircle,
   LogOut, 
   Menu, 
-  X, 
-  CreditCard,
+  X,
   User as UserIcon
 } from 'lucide-react';
 
@@ -20,19 +23,28 @@ interface LayoutProps {
 }
 
 export const Layout: React.FC<LayoutProps> = ({ user, currentView, onViewChange, children }) => {
+  const { signOut } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const navigation = [
+  const adminNavigation = [
     { id: 'dashboard', name: 'Tableau de bord', icon: LayoutDashboard },
-    { id: 'codes', name: 'Gestion des codes', icon: Package },
-    { id: 'transactions', name: 'Historique', icon: History },
+    { id: 'customers', name: 'Clients', icon: Users },
+    { id: 'subscriptions', name: 'Abonnements', icon: Crown },
+    { id: 'plans', name: 'Offres', icon: Settings },
+    { id: 'payments', name: 'Paiements', icon: CreditCard },
+    { id: 'notifications', name: 'Notifications', icon: Bell },
+    { id: 'support', name: 'Support', icon: HelpCircle },
   ];
 
-  const handleSignOut = () => {
-    if (auth) {
-      auth.signOut();
-    }
-  };
+  const customerNavigation = [
+    { id: 'dashboard', name: 'Mon espace', icon: LayoutDashboard },
+    { id: 'subscription', name: 'Mon abonnement', icon: Crown },
+    { id: 'payments', name: 'Mes paiements', icon: CreditCard },
+    { id: 'profile', name: 'Mon profil', icon: Settings },
+    { id: 'support', name: 'Support', icon: HelpCircle },
+  ];
+
+  const navigation = user.role === 'admin' ? adminNavigation : customerNavigation;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -42,10 +54,10 @@ export const Layout: React.FC<LayoutProps> = ({ user, currentView, onViewChange,
         <div className="fixed inset-y-0 left-0 flex w-64 flex-col bg-white shadow-xl">
           <div className="flex h-16 items-center justify-between px-6 border-b">
             <div className="flex items-center space-x-3">
-              <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-                <CreditCard className="h-5 w-5 text-white" />
+              <div className="w-8 h-8 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center">
+                <Crown className="h-5 w-5 text-white" />
               </div>
-              <span className="text-xl font-bold text-gray-900">RechargeHub</span>
+              <span className="text-xl font-bold text-gray-900">SubsManager</span>
             </div>
             <button onClick={() => setSidebarOpen(false)}>
               <X className="h-6 w-6 text-gray-400" />
@@ -63,7 +75,7 @@ export const Layout: React.FC<LayoutProps> = ({ user, currentView, onViewChange,
                   }}
                   className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg text-left transition-all ${
                     currentView === item.id
-                      ? 'bg-blue-50 text-blue-700 border-r-2 border-blue-700'
+                      ? 'bg-indigo-50 text-indigo-700 border-r-2 border-indigo-700'
                       : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
                   }`}
                 >
@@ -81,10 +93,10 @@ export const Layout: React.FC<LayoutProps> = ({ user, currentView, onViewChange,
         <div className="flex flex-col flex-grow bg-white border-r border-gray-200 shadow-sm">
           <div className="flex items-center h-16 px-6 border-b">
             <div className="flex items-center space-x-3">
-              <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-                <CreditCard className="h-5 w-5 text-white" />
+              <div className="w-8 h-8 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center">
+                <Crown className="h-5 w-5 text-white" />
               </div>
-              <span className="text-xl font-bold text-gray-900">RechargeHub</span>
+              <span className="text-xl font-bold text-gray-900">SubsManager</span>
             </div>
           </div>
           <nav className="flex-1 px-4 py-6 space-y-2">
@@ -96,7 +108,7 @@ export const Layout: React.FC<LayoutProps> = ({ user, currentView, onViewChange,
                   onClick={() => onViewChange(item.id)}
                   className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg text-left transition-all ${
                     currentView === item.id
-                      ? 'bg-blue-50 text-blue-700 border-r-2 border-blue-700'
+                      ? 'bg-indigo-50 text-indigo-700 border-r-2 border-indigo-700'
                       : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
                   }`}
                 >
@@ -108,16 +120,16 @@ export const Layout: React.FC<LayoutProps> = ({ user, currentView, onViewChange,
           </nav>
           <div className="p-4 border-t">
             <div className="flex items-center space-x-3 mb-4">
-              <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center">
+              <div className="w-10 h-10 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-full flex items-center justify-center">
                 <UserIcon className="h-5 w-5 text-white" />
               </div>
               <div>
                 <p className="text-sm font-medium text-gray-900">{user.name}</p>
-                <p className="text-xs text-gray-500 capitalize">{user.role}</p>
+                <p className="text-xs text-gray-500 capitalize">{user.role === 'admin' ? 'Administrateur' : 'Client'}</p>
               </div>
             </div>
             <button
-              onClick={handleSignOut}
+              onClick={signOut}
               className="w-full flex items-center space-x-3 px-4 py-2 text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
             >
               <LogOut className="h-4 w-4" />
@@ -135,10 +147,10 @@ export const Layout: React.FC<LayoutProps> = ({ user, currentView, onViewChange,
             <Menu className="h-6 w-6 text-gray-600" />
           </button>
           <div className="flex items-center space-x-3">
-            <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-              <CreditCard className="h-5 w-5 text-white" />
+            <div className="w-8 h-8 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center">
+              <Crown className="h-5 w-5 text-white" />
             </div>
-            <span className="text-lg font-bold text-gray-900">RechargeHub</span>
+            <span className="text-lg font-bold text-gray-900">SubsManager</span>
           </div>
           <div className="w-6"></div>
         </div>

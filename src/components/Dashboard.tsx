@@ -1,97 +1,215 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, getDocs, where, orderBy } from 'firebase/firestore';
+import { collection, query, getDocs, where, orderBy, limit } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { DashboardStats, Transaction } from '../types';
-import { TrendingUp, Package, DollarSign, Users, Calendar, BarChart3 } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { DashboardStats, User, Subscription, Payment } from '../types';
+import { Users, Crown, DollarSign, TrendingUp, AlertTriangle, Calendar } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
 
 interface DashboardProps {
-  userRole: 'admin' | 'vendor';
+  user: User;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ userRole }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ user }) => {
   const [stats, setStats] = useState<DashboardStats>({
-    totalCodes: 0,
-    availableCodes: 0,
-    soldCodes: 0,
-    totalRevenue: 0,
-    totalProfit: 0,
-    todaysSales: 0,
-    monthlyRevenue: 0
+    totalCustomers: 0,
+    activeSubscriptions: 0,
+    trialSubscriptions: 0,
+    monthlyRevenue: 0,
+    churnRate: 0,
+    newSignups: 0,
+    expiringSubscriptions: 0,
+    failedPayments: 0
   });
-  const [recentTransactions, setRecentTransactions] = useState<Transaction[]>([]);
+  const [recentActivity, setRecentActivity] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadDashboardData();
-  }, []);
+    if (user.role === 'admin') {
+      loadAdminDashboard();
+    } else {
+      loadCustomerDashboard();
+    }
+  }, [user]);
 
-  const loadDashboardData = async () => {
-    if (!db) return;
-
+  const loadAdminDashboard = async () => {
     try {
-      // Charger les statistiques des codes
-      const codesQuery = query(collection(db, 'rechargeCodes'));
-      const codesSnapshot = await getDocs(codesQuery);
-      const codes = codesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      // Charger les statistiques
+      const [usersSnapshot, subscriptionsSnapshot, paymentsSnapshot] = await Promise.all([
+        getDocs(query(collection(db, 'users'), where('role', '==', 'customer'))),
+        getDocs(collection(db, 'subscriptions')),
+        getDocs(collection(db, 'payments'))
+      ]);
 
-      const totalCodes = codes.length;
-      const availableCodes = codes.filter(code => code.status === 'available').length;
-      const soldCodes = codes.filter(code => code.status === 'sold').length;
-
-      // Charger les transactions
-      const transactionsQuery = query(
-        collection(db, 'transactions'),
-        orderBy('createdAt', 'desc')
-      );
-      const transactionsSnapshot = await getDocs(transactionsQuery);
-      const transactions = transactionsSnapshot.docs.map(doc => ({
-        id: doc.id,
+      const users = usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const subscriptions = subscriptionsSnapshot.docs.map(doc => ({ 
+        id: doc.id, 
         ...doc.data(),
-        saleDate: doc.data().saleDate?.toDate() || new Date(),
-        createdAt: doc.data().createdAt?.toDate() || new Date()
-      })) as Transaction[];
+        startDate: doc.data().startDate?.toDate(),
+        endDate: doc.data().endDate?.toDate(),
+        createdAt: doc.data().createdAt?.toDate()
+      })) as Subscription[];
+      const payments = paymentsSnapshot.docs.map(doc => ({ 
+        id: doc.id, 
+        ...doc.data(),
+        createdAt: doc.data().createdAt?.toDate()
+      })) as Payment[];
 
-      setRecentTransactions(transactions.slice(0, 10));
+      const activeSubscriptions = subscriptions.filter(s => s.status === 'active').length;
+      const trialSubscriptions = subscriptions.filter(s => s.status === 'trial').length;
+      const monthlyRevenue = payments
+        .filter(p => p.status === 'completed' && isCurrentMonth(p.createdAt))
+        .reduce((sum, p) => sum + p.amount, 0);
 
-      const totalRevenue = transactions.reduce((sum, t) => sum + t.salePrice, 0);
-      const totalProfit = transactions.reduce((sum, t) => sum + t.profit, 0);
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      const newSignups = users.filter(u => u.createdAt && u.createdAt >= thirtyDaysAgo).length;
 
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const todaysSales = transactions.filter(t => t.saleDate >= today).length;
+      const nextWeek = new Date();
+      nextWeek.setDate(nextWeek.getDate() + 7);
+      const expiringSubscriptions = subscriptions.filter(s => 
+        s.status === 'active' && s.endDate && s.endDate <= nextWeek
+      ).length;
 
-      const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-      const monthlyRevenue = transactions
-        .filter(t => t.saleDate >= firstDayOfMonth)
-        .reduce((sum, t) => sum + t.salePrice, 0);
+      const failedPayments = payments.filter(p => 
+        p.status === 'failed' && isCurrentMonth(p.createdAt)
+      ).length;
 
       setStats({
-        totalCodes,
-        availableCodes,
-        soldCodes,
-        totalRevenue,
-        totalProfit,
-        todaysSales,
-        monthlyRevenue
+        totalCustomers: users.length,
+        activeSubscriptions,
+        trialSubscriptions,
+        monthlyRevenue,
+        churnRate: 0, // À calculer selon la logique métier
+        newSignups,
+        expiringSubscriptions,
+        failedPayments
       });
+
+      // Activité récente
+      const recentSubs = subscriptions
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+        .slice(0, 5);
+      
+      setRecentActivity(recentSubs);
+
     } catch (error) {
-      console.error('Erreur lors du chargement des données:', error);
+      console.error('Erreur lors du chargement du dashboard admin:', error);
     } finally {
       setLoading(false);
     }
   };
 
-  const chartData = [
-    { name: 'Disponibles', value: stats.availableCodes, color: '#10B981' },
-    { name: 'Vendus', value: stats.soldCodes, color: '#3B82F6' },
-    { name: 'Expirés', value: stats.totalCodes - stats.availableCodes - stats.soldCodes, color: '#EF4444' }
-  ];
+  const loadCustomerDashboard = async () => {
+    try {
+      // Charger les données du client
+      const [subscriptionsSnapshot, paymentsSnapshot] = await Promise.all([
+        getDocs(query(collection(db, 'subscriptions'), where('userId', '==', user.id))),
+        getDocs(query(collection(db, 'payments'), where('userId', '==', user.id), orderBy('createdAt', 'desc'), limit(5)))
+      ]);
+
+      const subscriptions = subscriptionsSnapshot.docs.map(doc => ({ 
+        id: doc.id, 
+        ...doc.data(),
+        startDate: doc.data().startDate?.toDate(),
+        endDate: doc.data().endDate?.toDate(),
+        createdAt: doc.data().createdAt?.toDate()
+      })) as Subscription[];
+
+      const payments = paymentsSnapshot.docs.map(doc => ({ 
+        id: doc.id, 
+        ...doc.data(),
+        createdAt: doc.data().createdAt?.toDate()
+      })) as Payment[];
+
+      setRecentActivity(payments);
+
+    } catch (error) {
+      console.error('Erreur lors du chargement du dashboard client:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const isCurrentMonth = (date: Date) => {
+    const now = new Date();
+    return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+  };
 
   if (loading) {
     return (
       <div className="flex items-center justify-center p-8">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+      </div>
+    );
+  }
+
+  if (user.role === 'customer') {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">Bienvenue, {user.name}</h1>
+          <p className="text-gray-600 mt-1">Gérez votre abonnement et vos préférences</p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="bg-white rounded-xl shadow-sm border p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">Statut abonnement</p>
+                <p className="text-2xl font-bold text-green-600">Actif</p>
+              </div>
+              <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
+                <Crown className="h-6 w-6 text-green-600" />
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl shadow-sm border p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">Prochaine facturation</p>
+                <p className="text-2xl font-bold text-gray-900">15 Jan</p>
+              </div>
+              <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+                <Calendar className="h-6 w-6 text-blue-600" />
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl shadow-sm border p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">Montant mensuel</p>
+                <p className="text-2xl font-bold text-purple-600">29,99 €</p>
+              </div>
+              <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
+                <DollarSign className="h-6 w-6 text-purple-600" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm border p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Historique des paiements</h3>
+          <div className="space-y-3">
+            {recentActivity.map((payment: Payment) => (
+              <div key={payment.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                <div>
+                  <p className="font-medium text-gray-900">{payment.amount} €</p>
+                  <p className="text-sm text-gray-600">{payment.createdAt.toLocaleDateString('fr-FR')}</p>
+                </div>
+                <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                  payment.status === 'completed' ? 'bg-green-100 text-green-800' :
+                  payment.status === 'failed' ? 'bg-red-100 text-red-800' :
+                  'bg-yellow-100 text-yellow-800'
+                }`}>
+                  {payment.status === 'completed' ? 'Payé' :
+                   payment.status === 'failed' ? 'Échec' : 'En attente'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     );
   }
@@ -101,7 +219,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ userRole }) => {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Tableau de bord</h1>
-          <p className="text-gray-600 mt-1">Vue d'ensemble de votre activité</p>
+          <p className="text-gray-600 mt-1">Vue d'ensemble de votre plateforme</p>
         </div>
         <div className="flex items-center space-x-2 text-sm text-gray-500">
           <Calendar className="h-4 w-4" />
@@ -114,11 +232,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ userRole }) => {
         <div className="bg-white rounded-xl shadow-sm border p-6">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-600">Total Codes</p>
-              <p className="text-2xl font-bold text-gray-900">{stats.totalCodes}</p>
+              <p className="text-sm font-medium text-gray-600">Total Clients</p>
+              <p className="text-2xl font-bold text-gray-900">{stats.totalCustomers}</p>
             </div>
             <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-              <Package className="h-6 w-6 text-blue-600" />
+              <Users className="h-6 w-6 text-blue-600" />
             </div>
           </div>
         </div>
@@ -126,11 +244,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ userRole }) => {
         <div className="bg-white rounded-xl shadow-sm border p-6">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-600">Codes Disponibles</p>
-              <p className="text-2xl font-bold text-green-600">{stats.availableCodes}</p>
+              <p className="text-sm font-medium text-gray-600">Abonnements Actifs</p>
+              <p className="text-2xl font-bold text-green-600">{stats.activeSubscriptions}</p>
             </div>
             <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
-              <TrendingUp className="h-6 w-6 text-green-600" />
+              <Crown className="h-6 w-6 text-green-600" />
             </div>
           </div>
         </div>
@@ -138,77 +256,77 @@ export const Dashboard: React.FC<DashboardProps> = ({ userRole }) => {
         <div className="bg-white rounded-xl shadow-sm border p-6">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-600">Chiffre d'affaires</p>
-              <p className="text-2xl font-bold text-blue-600">{stats.totalRevenue.toLocaleString()} Ar</p>
-            </div>
-            <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-              <DollarSign className="h-6 w-6 text-blue-600" />
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-xl shadow-sm border p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-600">Bénéfices</p>
-              <p className="text-2xl font-bold text-purple-600">{stats.totalProfit.toLocaleString()} Ar</p>
+              <p className="text-sm font-medium text-gray-600">Revenus Mensuels</p>
+              <p className="text-2xl font-bold text-purple-600">{stats.monthlyRevenue.toLocaleString()} €</p>
             </div>
             <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
-              <BarChart3 className="h-6 w-6 text-purple-600" />
+              <DollarSign className="h-6 w-6 text-purple-600" />
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm border p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-600">Nouveaux Clients</p>
+              <p className="text-2xl font-bold text-indigo-600">{stats.newSignups}</p>
+            </div>
+            <div className="w-12 h-12 bg-indigo-100 rounded-lg flex items-center justify-center">
+              <TrendingUp className="h-6 w-6 text-indigo-600" />
             </div>
           </div>
         </div>
       </div>
 
-      {/* Graphiques */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white rounded-xl shadow-sm border p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Répartition des codes</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <PieChart>
-              <Pie
-                data={chartData}
-                cx="50%"
-                cy="50%"
-                innerRadius={60}
-                outerRadius={100}
-                paddingAngle={5}
-                dataKey="value"
-              >
-                {chartData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={entry.color} />
-                ))}
-              </Pie>
-              <Tooltip />
-            </PieChart>
-          </ResponsiveContainer>
-          <div className="flex justify-center space-x-4 mt-4">
-            {chartData.map((item, index) => (
-              <div key={index} className="flex items-center space-x-2">
-                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }}></div>
-                <span className="text-sm text-gray-600">{item.name}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="bg-white rounded-xl shadow-sm border p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Transactions récentes</h3>
-          <div className="space-y-3 max-h-80 overflow-y-auto">
-            {recentTransactions.map((transaction) => (
-              <div key={transaction.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+      {/* Alertes */}
+      {(stats.expiringSubscriptions > 0 || stats.failedPayments > 0) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {stats.expiringSubscriptions > 0 && (
+            <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-6">
+              <div className="flex items-center space-x-3">
+                <AlertTriangle className="h-6 w-6 text-yellow-600" />
                 <div>
-                  <p className="font-medium text-gray-900">{transaction.platform}</p>
-                  <p className="text-sm text-gray-600">{transaction.denomination.toLocaleString()} Ar - {transaction.type === '1-month' ? '1 mois' : '3 mois'}</p>
-                  <p className="text-xs text-gray-500">{transaction.saleDate.toLocaleDateString('fr-FR')}</p>
-                </div>
-                <div className="text-right">
-                  <p className="font-semibold text-green-600">+{transaction.salePrice.toLocaleString()} Ar</p>
-                  <p className="text-xs text-gray-500">Bénéfice: {transaction.profit.toLocaleString()} Ar</p>
+                  <h3 className="font-semibold text-yellow-800">Abonnements expirant</h3>
+                  <p className="text-sm text-yellow-700">{stats.expiringSubscriptions} abonnements expirent dans les 7 prochains jours</p>
                 </div>
               </div>
-            ))}
-          </div>
+            </div>
+          )}
+
+          {stats.failedPayments > 0 && (
+            <div className="bg-red-50 border border-red-200 rounded-xl p-6">
+              <div className="flex items-center space-x-3">
+                <AlertTriangle className="h-6 w-6 text-red-600" />
+                <div>
+                  <h3 className="font-semibold text-red-800">Paiements échoués</h3>
+                  <p className="text-sm text-red-700">{stats.failedPayments} paiements ont échoué ce mois-ci</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Activité récente */}
+      <div className="bg-white rounded-xl shadow-sm border p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Activité récente</h3>
+        <div className="space-y-3">
+          {recentActivity.map((subscription: Subscription) => (
+            <div key={subscription.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+              <div>
+                <p className="font-medium text-gray-900">Nouvel abonnement {subscription.planName}</p>
+                <p className="text-sm text-gray-600">{subscription.createdAt.toLocaleDateString('fr-FR')}</p>
+              </div>
+              <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                subscription.status === 'active' ? 'bg-green-100 text-green-800' :
+                subscription.status === 'trial' ? 'bg-blue-100 text-blue-800' :
+                'bg-gray-100 text-gray-800'
+              }`}>
+                {subscription.status === 'active' ? 'Actif' :
+                 subscription.status === 'trial' ? 'Essai' : subscription.status}
+              </span>
+            </div>
+          ))}
         </div>
       </div>
     </div>

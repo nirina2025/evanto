@@ -1,109 +1,77 @@
 import { useState, useEffect } from 'react';
-import { User } from '@supabase/supabase-js';
-import { supabase } from '../lib/supabase';
-import { User as AppUser } from '../types';
+import { User as FirebaseUser, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut as firebaseSignOut } from 'firebase/auth';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { auth, db } from '../lib/firebase';
+import { User } from '../types';
 
 export const useAuth = () => {
-  const [user, setUser] = useState<AppUser | null>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!supabase) {
-      setLoading(false);
-      return;
-    }
-
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        loadUserProfile(session.user);
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
+      if (firebaseUser) {
+        try {
+          const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
+          if (userDoc.exists()) {
+            const userData = userDoc.data();
+            setUser({
+              id: firebaseUser.uid,
+              email: firebaseUser.email || '',
+              name: userData.name || '',
+              phone: userData.phone,
+              address: userData.address,
+              role: userData.role || 'customer',
+              preferences: userData.preferences || {
+                notifications: true,
+                promotions: true,
+                emailReminders: true
+              },
+              createdAt: userData.createdAt?.toDate() || new Date(),
+              updatedAt: userData.updatedAt?.toDate() || new Date()
+            });
+          }
+        } catch (error) {
+          console.error('Erreur lors de la récupération des données utilisateur:', error);
+        }
       } else {
-        setLoading(false);
+        setUser(null);
       }
+      setLoading(false);
     });
 
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        if (session?.user) {
-          await loadUserProfile(session.user);
-        } else {
-          setUser(null);
-          setLoading(false);
-        }
-      }
-    );
-
-    return () => subscription.unsubscribe();
+    return () => unsubscribe();
   }, []);
 
-  const loadUserProfile = async (authUser: User) => {
-    try {
-      const { data, error } = await supabase!
-        .from('users')
-        .select('*')
-        .eq('id', authUser.id)
-        .single();
-
-      if (error) throw error;
-
-      setUser({
-        id: authUser.id,
-        email: authUser.email || '',
-        name: data.name || '',
-        phone: data.phone,
-        address: data.address,
-        role: data.role || 'customer',
-        createdAt: new Date(data.created_at),
-        updatedAt: new Date(data.updated_at)
-      });
-    } catch (error) {
-      console.error('Error loading user profile:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const signIn = async (email: string, password: string) => {
-    if (!supabase) throw new Error('Supabase not initialized');
-    
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password
-    });
-    
-    if (error) throw error;
+    const { user: firebaseUser } = await signInWithEmailAndPassword(auth, email, password);
+    return firebaseUser;
   };
 
   const signUp = async (email: string, password: string, name: string, phone?: string) => {
-    if (!supabase) throw new Error('Supabase not initialized');
+    const { user: firebaseUser } = await createUserWithEmailAndPassword(auth, email, password);
     
-    const { data, error } = await supabase.auth.signUp({
+    // Créer le profil utilisateur
+    await setDoc(doc(db, 'users', firebaseUser.uid), {
+      name,
       email,
-      password
+      phone: phone || '',
+      address: '',
+      role: 'customer',
+      preferences: {
+        notifications: true,
+        promotions: true,
+        emailReminders: true
+      },
+      createdAt: new Date(),
+      updatedAt: new Date()
     });
-    
-    if (error) throw error;
-    
-    if (data.user) {
-      // Create user profile
-      const { error: profileError } = await supabase
-        .from('users')
-        .insert({
-          id: data.user.id,
-          email,
-          name,
-          phone,
-          role: 'customer'
-        });
-      
-      if (profileError) throw profileError;
-    }
+
+    return firebaseUser;
   };
 
   const signOut = async () => {
-    if (!supabase) return;
-    await supabase.auth.signOut();
+    await firebaseSignOut(auth);
   };
 
   return {
